@@ -10,65 +10,88 @@ from sklearn.metrics import precision_recall_fscore_support, roc_auc_score, \
     median_absolute_error, r2_score, explained_variance_score
 
 
-class LSTMLayer(nn.Module):
-    def __init__(self, atom_fea_len, hidden):
-        super(LSTMLayer, self).__init__()
-        self.lstm = nn.LSTM(atom_fea_len, hidden, 1, bias=False)
+_attention_dict = {"relu": nn.ReLU()}
 
-    def forward(self, atom_in_fea, h, c):
-        atom_out_fea, (h, c) = self.lstm(atom_in_fea, (h, c))
-        return atom_out_fea, (h, c)
 
-def one_perceptron(in_dim, out_dim, bias=True, activation=ReLU(), bn=False,
-                   dropout_rate=None, activation_order='before'):
-    perceptron_list = [Linear(in_dim, out_dim, bias)]
-    if activation_order == 'before' and activation is not None:
-        perceptron_list.append(activation)
+def single_layer_perceptron(in_dim, out_dim, bias=True, activation=ReLU(),
+                            bn=True, dropout=0, activation_before_bn=True):
+    """
+    Build a single layer perceptron model.
+    Args:
+        in_dim (int): input dimension
+        out_dim (int): output dimension
+        bias (bool): whether to add bias in the linear transformation.
+        activation (func): activation function.
+        bn (bool): whether to perform batch-normalization.
+        dropout (float): If non-zero, introduces a Dropout layer on the output,
+            with dropout probability equal to dropout. Default: 0
+        activation_before_bn (bool): whether to perform activation before
+            batch normalization. Default: True.
+    Returns:
+        modules (list)
+    """
+    modules = [Linear(in_dim, out_dim, bias)]
+    if activation_before_bn == 'before' and activation is not None:
+        modules.append(activation)
     if bn:
-        perceptron_list.append(BatchNorm1d(out_dim))
-    if activation_order == 'after' and activation is not None:
-        perceptron_list.append(activation)
-    if dropout_rate is not None:
-        perceptron_list.append(Dropout(dropout_rate))
-    return perceptron_list
+        modules.append(BatchNorm1d(out_dim))
+    if activation_before_bn == False and activation is not None:
+        modules.append(activation)
+    if dropout > 0:
+        modules.append(Dropout(dropout))
+    return modules
 
 
 class MLP(torch.nn.Module):
+    """
+    Build a multi-layer perception (MLP) model.
+    """
     def __init__(self, input_dim, output_dims, bias=True, activation=ReLU(),
-                 activate_final=True, bn=False, dropout_rate=None,
-                 activation_order='before'):
+                 activation_final=ReLU(), bn=True, dropout=0,
+                 activation_before_bn=True):
+        """
+        Create a mlp model.
+        Args:
+            input_dim (int): input dimension.
+            output_dims (list): a list of output dimensions. The length
+                corresponds to the number of layers.
+            bias (bool): whether to add bias in the linear transformation.
+            activation (func): activation function in the middle layers.
+            activation_final (func or None): activation function in the output
+                layer. If set to None, no activation function will be applied.
+            bn (bool): whether to perform batch-normalization.
+            dropout (float): If non-zero, introduces a Dropout layer on the
+                outputs of each layer, with dropout probability equal to
+                dropout. Default: 0.
+            activation_before_bn (bool): whether to perform activation before
+                batch normalization. Default: True.
+        """
         super(MLP, self).__init__()
-        layer_list = list()
+        modules = list()
         mlp_dims = [input_dim, *output_dims]
         for idx, (in_dim, out_dim) in enumerate(
                 zip(mlp_dims[:-1], mlp_dims[1:])):
             if idx == len(output_dims) - 1:
-                layer_list.extend(one_perceptron(
-                    in_dim, out_dim, bias, activation if activate_final else None,
-                    bn, dropout_rate, activation_order))
+                modules.extend(single_layer_perceptron(
+                    in_dim, out_dim, bias, activation if activation_final else None,
+                    bn, dropout, activation_before_bn))
             else:
-                layer_list.extend(one_perceptron(
+                modules.extend(single_layer_perceptron(
                     in_dim, out_dim, bias, activation,
-                    bn, dropout_rate, activation_order))
-        self.mlp = Sequential(*layer_list)
+                    bn, dropout, activation_before_bn))
+        self.mlp = Sequential(*modules)
 
     def forward(self, x):
         return self.mlp(x)
 
 
-def wrap_packed_sequence(packed_sequence, fn):
-    return PackedSequence(
-        fn(packed_sequence.data), packed_sequence.batch_sizes,
-        packed_sequence.sorted_indices, packed_sequence.unsorted_indices)
-
-
 def weight_init(m):
     '''
     Usage:
-        model = Model()
+        model = Model()  # Instantiate a model
         model.apply(weight_init)
     '''
-    print('weight init!')
+    print('weight initialization!')
     if isinstance(m, nn.Conv1d):
         init.normal_(m.weight.data)
         if m.bias is not None:
@@ -131,23 +154,22 @@ def weight_init(m):
                 init.normal_(param.data)
 
 
-def summarize_parameters(model):
-    summarize_list = list()
-    for k, v in model['state_dict'].items():
+def summarize_model_parameters(model):
+    summary_list = list()
+    for k, v in model.state_dict().items():
         print(k, int(np.prod(v.size())))
-        summarize_list.append([k, int(np.prod(v.size()))])
+        summary_list.append([k, int(np.prod(v.size()))])
     print('total parameters are : {}'.format(
-        sum(p.numel() for p in model['state_dict'].values())))
-    return summarize_list
+        sum(p.numel() for p in model.state_dict().values())))
+    return summary_list
 
 
 def mae(prediction, target):
     """
     Computes the mean absolute error between prediction and target
-
     Args:
-        prediction(torch.Tensor (N, 1)): Predict tensor.
-        target(torch.Tensor (N, 1)): Target tensor.
+        prediction(Tensor (N, 1)): Prediction tensor.
+        target(Tensor (N, 1)): Target tensor.
     """
     return torch.mean(torch.abs(target - prediction))
 
@@ -176,12 +198,10 @@ class Normalizer(object):
 
 def classification_eval(target, prediction):
     """
-    Evaluate learning results.
-
+    Evaluate classification results and return several commonly-used metrics.
     Args:
-        target(torch.Tensor (N, 1)): Target tensor.
-        prediction(torch.Tensor (N, 2)): Predict tensor.
-
+        target(Tensor (N, 1)): Target tensor.
+        prediction(Tensor (N, 2)): Predict tensor.
     Returns:
         accuracy (float): Accuracy score.
         precision (float): Precision score.
@@ -213,6 +233,19 @@ def classification_eval(target, prediction):
 
 
 def regression_eval(target, prediction):
+    """
+    Evaluate regression results and return several commonly-used metrics.
+    Args:
+        target(Tensor (N, 1)): Target tensor.
+        prediction(Tensor (N, 1)): Predict tensor.
+    Returns:
+        mae (float): Mean absolute error score.
+        mse (float): Mean squared error score.
+        mdae (float): Median absolute error score.
+        r2 (float): R2 score.
+        evs (float): Explained variance score.
+        pcc (float): Pearson correlation coefficient.
+    """
     mae = mean_absolute_error(target, prediction)
     mse = mean_squared_error(target, prediction)
     mdae = median_absolute_error(target, prediction)
@@ -223,26 +256,24 @@ def regression_eval(target, prediction):
 
 
 def adjust_learning_rate(optimizer, factor=0.1):
-    """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
+    """Sets the learning rate to the original value * factor"""
     for param_group in optimizer.param_groups:
         param_group['lr'] *= factor
 
 
 def appropriate_kwargs(kwargs, func):
     """
-    Auto get the appropriate kwargs according to those allowed by the func.
+    Filter the appropriate kwargs that are allowed by the function.
     Args:
         kwargs (dict): kwargs.
         func (object): function object.
-
     Returns:
         filtered_dict (dict): filtered kwargs.
-
     """
     sig = inspect.signature(func)
     filter_keys = [param.name for param in sig.parameters.values()
                    if param.kind == param.POSITIONAL_OR_KEYWORD and
                    param.name in kwargs.keys()]
-    appropriate_dict = {filter_key: kwargs[filter_key]
-                        for filter_key in filter_keys}
-    return appropriate_dict
+    filtered_dict = {filter_key: kwargs[filter_key]
+                     for filter_key in filter_keys}
+    return filtered_dict

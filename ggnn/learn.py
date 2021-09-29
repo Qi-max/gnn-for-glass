@@ -13,7 +13,7 @@ from ggnn.train import train_step
 
 
 class GNNLearn(object):
-    def __init__(self, train_dataset_wrapper, graph_model, normalizer, optimizer,
+    def __init__(self, train_dataset_wrapper, graph_model, target_normalizer, optimizer,
                  loss_func, scheduler, task='regression', disable_cuda=False,
                  warm_start_file=None, warm_start_best=False, output_path=".",
                  save_best=True, save_last=False, checkpoint_interval=None,
@@ -25,7 +25,7 @@ class GNNLearn(object):
         self.test_dataset_wrapper = test_dataset_wrapper
         self.eval_train_dataset_wrapper = eval_train_dataset_wrapper
         self.graph_model = graph_model
-        self.normalizer = normalizer
+        self.target_normalizer = target_normalizer
         self.optimizer = optimizer
         self.loss_func = loss_func
         self.scheduler = scheduler
@@ -144,7 +144,7 @@ class GNNLearn(object):
                 train_score, loss_value = train_step(
                     train_loader=train_loader, model=self.graph_model,
                     loss_func=self.loss_func, optimizer=self.optimizer,
-                    epoch=epoch, normalizer=self.normalizer,
+                    epoch=epoch, target_normalizer=self.target_normalizer,
                     logger=self.detail_logger, task=self.task,
                     device=self.device, print_freq=print_freq,
                     measure_metrics=self.measure_metrics,
@@ -159,7 +159,7 @@ class GNNLearn(object):
                         if self.eval_train_dataset_wrapper is None
                         else eval_train_loader,
                         model=self.graph_model, loss_func=self.loss_func,
-                        optimizer=self.optimizer, normalizer=self.normalizer,
+                        optimizer=self.optimizer, target_normalizer=self.target_normalizer,
                         test=False, logger=self.detail_logger, task=self.task,
                         device=self.device, print_freq=print_freq,
                         measure_metrics=self.measure_metrics, task_tag='Train')
@@ -172,7 +172,7 @@ class GNNLearn(object):
                     validate_score = predict_step(
                         data_loader=val_loader, model=self.graph_model,
                         loss_func=self.loss_func, optimizer=self.optimizer,
-                        normalizer=self.normalizer, test=False,
+                        target_normalizer=self.target_normalizer, test=False,
                         logger=self.detail_logger, task=self.task,
                         device=self.device, print_freq=print_freq,
                         output_path=self.output_path,
@@ -191,7 +191,7 @@ class GNNLearn(object):
                     test_score = predict_step(
                         data_loader=test_loader, model=self.graph_model,
                         loss_func=self.loss_func, optimizer=self.optimizer,
-                        normalizer=self.normalizer, test=test,
+                        target_normalizer=self.target_normalizer, test=test,
                         logger=self.detail_logger, task=self.task,
                         device=self.device, print_freq=print_freq,
                         output_path=self.output_path,
@@ -229,7 +229,7 @@ class GNNLearn(object):
                 if self.output_path is not None:
                     self._save_model(
                         epoch, best_epoch, best_score, self.optimizer,
-                        self.normalizer, self.scheduler, self.best_model_file)
+                        self.target_normalizer, self.scheduler, self.best_model_file)
             self._latest_model = self.graph_model
 
             # Save checkpoint
@@ -238,12 +238,12 @@ class GNNLearn(object):
                      epoch % self.checkpoint_interval == 0):
                 self._save_model(
                     epoch, best_epoch, best_score, self.optimizer,
-                    self.normalizer, self.scheduler, self.checkpoint_file)
+                    self.target_normalizer, self.scheduler, self.checkpoint_file)
 
             elif self.save_last and self.output_path is not None:
                 self._save_model(
                     epoch, best_epoch, best_score, self.optimizer,
-                    self.normalizer, self.scheduler, self.last_file)
+                    self.target_normalizer, self.scheduler, self.last_file)
 
         return self
 
@@ -265,7 +265,7 @@ class GNNLearn(object):
         self._latest_model = self.graph_model
         validate_score = predict_step(
             data_loader=val_loader, model=self.graph_model,
-            loss_func=self.loss_func, normalizer=self.normalizer,
+            loss_func=self.loss_func, target_normalizer=self.target_normalizer,
             optimizer=self.optimizer, test=True, save_test=True,
             logger=self.detail_logger, task=self.task, device=self.device,
             print_freq=1, output_path=self.output_path, all_metrics=True,
@@ -275,7 +275,7 @@ class GNNLearn(object):
         if self.test_dataset_wrapper is not None:
             test_score = predict_step(
                 data_loader=test_loader, model=self.graph_model,
-                loss_func=self.loss_func, normalizer=self.normalizer,
+                loss_func=self.loss_func, target_normalizer=self.target_normalizer,
                 optimizer=self.optimizer, test=True, save_test=True,
                 logger=self.detail_logger, task=self.task, device=self.device,
                 print_freq=1, output_path=self.output_path, all_metrics=True,
@@ -337,7 +337,7 @@ class GNNLearn(object):
             self._latest_model = deepcopy(self.graph_model)
 
             self.optimizer.load_state_dict(ws_model['optimizer'])
-            self.normalizer.load_state_dict(ws_model['normalizer'])
+            self.target_normalizer.load_state_dict(ws_model['target_normalizer'])
             self.scheduler.load_state_dict(ws_model['scheduler'])
 
             if isinstance(self.scheduler, ReduceLROnPlateau):
@@ -354,14 +354,14 @@ class GNNLearn(object):
         return start_epoch, best_epoch, best_score
 
     def _save_model(self, epoch, best_epoch, best_score, optimizer,
-                    normalizer, scheduler, output_file):
+                    target_normalizer, scheduler, output_file):
         torch.save({'epoch': epoch + 1,
                     'state_dict': self._latest_model.state_dict(),
                     'best_epoch': best_epoch,
                     'best_state_dict': self._best_model.state_dict(),
                     'best_score': best_score,
                     'optimizer': optimizer.state_dict(),
-                    'normalizer': normalizer.state_dict(),
+                    'target_normalizer': target_normalizer.state_dict(),
                     'scheduler': scheduler.state_dict()
                     },
                    output_file.format(best_epoch, best_score, epoch))
