@@ -10,6 +10,20 @@ class GNNLayer(nn.Module):
     def __init__(self, node_embedding_len, edge_embedding_len, n_head,
                  attention_len, attention_dropout=0, activation=None,
                  remember_func="residual", device=None):
+        """
+        Define a GNN layer.
+        Args:
+            node_embedding_len (int): input and output length of node embedding.
+            edge_embedding_len (int):  input and output length of edge embedding.
+            n_head (int): number of attention heads implemented.
+            attention_len (int):  length of attention vector implemented.
+            attention_dropout (float): If non-zero, introduces a Dropout layer
+                on the neighbors, with dropout probability equal to dropout.
+                Default: 0.
+            activation (None or func): activation function. If None, use softplus.
+            remember_func (str): "residual" or "lstm".
+            device (str): "cuda" or "cpu".
+        """
         super(GNNLayer, self).__init__()
         self.node_embedding_len = node_embedding_len
         self.edge_embedding_len = edge_embedding_len
@@ -52,6 +66,10 @@ class GNNLayer(nn.Module):
     def forward(self, node_features, edge_features, neighbor_indices,
                 neighbor_masks, h=None, c=None):
         """
+        Update node_features and edge_features via graph convolution and pooling.
+        Most of the complexity arises from the need to deal with different number
+        of neighbors for each atom. We use PackedSequence, pad_packed_sequence
+        and pack_padded_sequence of torch.nn.utils.rnn to realize the transition.
         Args:
             node_features (Tensor, (batch_size, node_embedding_len)):
             edge_features (Tensor, (batch_size, neighbor_len, edge_embedding_len)):
